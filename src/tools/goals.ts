@@ -30,6 +30,12 @@ export function registerGoalTools(server: McpServer, ctx: ToolContext): void {
         },
         risk:
             'Goals define what the experiment measures, so changing them on a running campaign ' +
-            'affects reported results and can invalidate conclusions drawn so far.'
+            'affects reported results and can invalidate conclusions drawn so far.',
+        bodyGuidance:
+            'Verified working shape: ' +
+            '`{"name":"Donation complete","type":"visitPage","urls":[{"type":"url","value":"https://example.com/thanks"}]}`. ' +
+            'Valid `type` values include "visitPage", "engagement", "formSubmit", and "custom-conversion". ' +
+            'VWO may normalize what you send (a "visitPage" goal is stored as a "custom-conversion" with a ' +
+            '`vwo_pageView` event), so read the response rather than assuming your input was kept verbatim.'
     });
 }

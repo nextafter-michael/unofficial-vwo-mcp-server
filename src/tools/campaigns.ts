@@ -148,8 +148,14 @@ export function registerCampaignTools(server: McpServer, ctx: ToolContext): void
             title: 'Create a VWO campaign',
             description:
                 'Create a new campaign (experiment) in a VWO workspace. Creates real state that can ' +
-                'affect live traffic once started. Confirm type, URLs, and goals with the user before ' +
-                'calling.',
+                'affect live traffic once started, so confirm type, URLs, and goals with the user before ' +
+                'calling — do not create campaigns speculatively or to explore the API. ' +
+                'New campaigns start at status NOT_STARTED (a draft) and do NOT run until explicitly ' +
+                'started, so creating one is safe from a traffic standpoint. ' +
+                'IMPORTANT follow-up: VWO creates the campaign with ONLY a Control variation, left ' +
+                'disabled at percentSplit 0. Adding a variation does not fix the Control. After creating, ' +
+                'read the campaign back and set the Control\'s isDisabled/percentSplit explicitly, or the ' +
+                'test has no baseline.',
             inputSchema: z.object({
                 ...accountArgs,
                 type: z
@@ -160,12 +166,61 @@ export function registerCampaignTools(server: McpServer, ctx: ToolContext): void
                             'URL), "multivariate" (not "mvt"), "feature-rollout" (Web Rollout), ' +
                             '"feature-test". Not the generic "AB"/"SPLIT_URL"/"MVT" naming.'
                     ),
-                primaryUrl: z.string().min(1).describe('Primary URL the campaign runs on.'),
+                primaryUrl: z
+                    .string()
+                    .min(1)
+                    .describe('Primary URL the campaign runs on — the page opened in VWO\'s visual editor.'),
                 urls: z
-                    .array(z.unknown())
-                    .describe('URL configuration entries for the campaign, as accepted by VWO.'),
-                goals: z.array(z.unknown()).describe('Goal definitions to create with the campaign.'),
-                name: z.string().min(1).optional().describe('Campaign name.')
+                    .array(
+                        z.object({
+                            type: z
+                                .string()
+                                .default('url')
+                                .describe('Match type. "url" matches that address; VWO also accepts pattern types.'),
+                            value: z.string().min(1).describe('The URL or pattern to match.')
+                        })
+                    )
+                    .min(1)
+                    .describe(
+                        'Pages the campaign targets. Verified working shape: ' +
+                            '[{"type":"url","value":"https://www.example.com"}]. Usually one entry matching ' +
+                            'primaryUrl; add more to widen targeting.'
+                    ),
+                goals: z
+                    .array(
+                        z.object({
+                            name: z.string().min(1).describe('Human-readable goal name.'),
+                            type: z
+                                .string()
+                                .default('visitPage')
+                                .describe(
+                                    'Goal type: "visitPage", "engagement", "formSubmit", or ' +
+                                        '"custom-conversion". VWO normalizes some of these on save.'
+                                ),
+                            urls: z
+                                .array(
+                                    z.object({
+                                        type: z.string().default('url'),
+                                        value: z.string().min(1)
+                                    })
+                                )
+                                .describe('URLs the goal is measured against, same shape as the campaign `urls`.')
+                        })
+                    )
+                    .min(1)
+                    .describe(
+                        'At least one goal is REQUIRED — VWO refuses to create a campaign without one, even ' +
+                            'for a test that will never be started. Verified working shape: ' +
+                            '[{"name":"Thank-you page visit","type":"visitPage",' +
+                            '"urls":[{"type":"url","value":"https://www.example.com/thanks"}]}]. If the user ' +
+                            'has not said what defines success, ask rather than inventing a metric — or, if ' +
+                            'they only want a draft, add one clearly-labeled placeholder goal and say so.'
+                    ),
+                name: z
+                    .string()
+                    .min(1)
+                    .optional()
+                    .describe('Campaign name. Always worth setting — VWO otherwise auto-names it "Campaign <n>".')
             }),
             annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true }
         },
@@ -222,8 +277,13 @@ export function registerCampaignTools(server: McpServer, ctx: ToolContext): void
                 ...accountArgs,
                 ...bodyArg(
                     'https://developers.wingify.com/reference/update-a-campaign-1',
-                    'Status change payload, typically the campaign id(s) and the desired status ' +
-                        '(for example RUNNING, PAUSED, or STOPPED).'
+                    'Status change payload: the campaign id(s) and the desired status. Statuses VWO ' +
+                        'accepts are RUNNING, PAUSED, STOPPED, NOT_STARTED, ARCHIVED, DELETED, and ACTIVE. ' +
+                        'This is also how a campaign gets removed — there is no DELETE endpoint for ' +
+                        'campaigns; setting DELETED soft-deletes it (it still appears under ' +
+                        'vwo_list_campaigns with isDeleted true, and via status=DELETED). Treat DELETED and ' +
+                        'ARCHIVED as destructive: never send them unless the user explicitly asked to ' +
+                        'delete or archive that specific campaign.'
                 )
             }),
             annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true }

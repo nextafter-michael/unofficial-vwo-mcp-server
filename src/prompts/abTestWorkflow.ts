@@ -18,7 +18,8 @@ import {
     buildEditorDataUnderstandSection,
     buildSnapshotSection,
     buildVerificationSection,
-    NO_DELETE_CAMPAIGN_NOTE,
+    NEW_CAMPAIGN_REVERSIBILITY_NOTE,
+    POST_CREATE_VERIFY_SECTION,
     parseOptionalInt,
     promptResult,
     WRAP_UP_SECTION
@@ -29,13 +30,14 @@ function buildInstructions(changeRequest: string, snapshotSection: string, isNew
         ? `## I. This is a NEW test — gather requirements first
 
 No campaignId was given, so there is nothing existing to inspect — but there is a lot to
-confirm before creating anything. ${NO_DELETE_CAMPAIGN_NOTE} Gather every item below and
+confirm before creating anything. ${NEW_CAMPAIGN_REVERSIBILITY_NOTE} Gather every item below and
 restate the full plan to the user for explicit confirmation before making that call.
 Don't infer a missing field silently — ask, except where a default is stated below.
 
 1. **Workspace.** Confirm which workspace (\`accountId\`/\`workspaceName\`) this belongs to.
-   Getting this wrong means the campaign now exists in the wrong client's account with no
-   way to remove it through this server.
+   Getting this wrong creates the campaign in the wrong client's account. That is
+   recoverable, but only by asking the user to approve deleting it — so confirm up front
+   rather than relying on cleanup.
 2. **Campaign type.** VWO's type values are lowercase and hyphenated — "ab" for a
    classic A/B test, "split" for Split URL (redirects to a different URL per variation
    instead of modifying the page in place), "multivariate" for MVT. These behave
@@ -99,6 +101,8 @@ rather than guessing at specifics like an exact color.
 Make one focused change per call — don't bundle unrelated edits together. Every one of
 these calls requires human approval in hosts that enforce it (this server marks all
 writes that way); expect and wait for that, it isn't a failure.
+
+${POST_CREATE_VERIFY_SECTION}
 
 ${buildVerificationSection('the SPECIFIC change from your plan (II), not just "did the page load"')}
 

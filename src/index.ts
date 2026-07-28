@@ -38,8 +38,11 @@ const SERVER_INSTRUCTIONS =
     "vwo_web_rollout_workflow (matching the campaign's type) rather than editing ad hoc — " +
     "each fetches the campaign's current state and prescribes a verify-before-done loop. " +
     'For questions about how VWO itself behaves rather than what to do with a campaign, ' +
-    "search VWO's own support/docs instead of guessing. See the vwo_general_guidance " +
-    'prompt for the full reference.';
+    "search VWO's own support/docs instead of guessing. Campaign-resource write bodies are " +
+    'wrapped for you (pass fields directly), and variation DOM edits are written as a ' +
+    '`changes` string, never as the `editorData` you get back when reading. Deleting a ' +
+    'campaign means setting status DELETED/ARCHIVED — only ever on explicit user request. ' +
+    'See the vwo_general_guidance prompt for the full reference.';
 
 function buildContext(config: Config): ToolContext {
     const client = new VwoClient(config);

@@ -110,13 +110,83 @@ own `type` filter enum on `GET /campaigns` is `ab`, `multivariate` (not `mvt`), 
 below, which is also how `feature-rollout` was confirmed as the real type value behind
 "Web Rollouts."
 
+### Campaign-resource writes need a plural wrapper
+
+VWO wraps every campaign-resource write body in the plural resource name. An unwrapped body is
+rejected with `HTTP 400 "Request is not in desired format."` — a real failure hit while creating a
+variation, not a theoretical one:
+
+| Operation | Required body |
+| --- | --- |
+| `vwo_update_campaign` | `{"campaigns": {…}}` |
+| `vwo_new_campaign_goal` / `vwo_update_campaign_goal` | `{"goals": {…}}` |
+| `vwo_new_campaign_variation` / `vwo_update_campaign_variation` | `{"variations": {…}}` |
+| `vwo_new_campaign_section` / `vwo_update_campaign_section` | `{"sections": {…}}` |
+
+**All of these tools add the wrapper for you — pass the fields flat.** An already-wrapped body is
+passed through untouched, so both forms work. The wrapper key is `spec.segment` in
+[`campaignResource.ts`](src/tools/campaignResource.ts), so goals/variations/sections get it from one
+place; `vwo_update_campaign` has its own.
+
+### Variation changes: write `changes`, read `editorData`
+
+The asymmetry here is a genuine trap. *Reading* a variation returns `editorData` — VWO's internal
+op stack (`{stack: [{op: {opName: …}}]}`). Writing that same structure back is **rejected**. The
+write format is a raw `changes` string, which VWO then compiles into `editorData` itself:
+
+```jsonc
+// write this
+{ "name": "Variation 1", "changes": "<script>/* JS that mutates the page */</script>" }
+```
+
+Both `vwo_new_campaign_variation` and `vwo_update_campaign_variation` say so in their `body`
+descriptions, and `vwo_general_guidance` repeats it, because the natural move — read the variation,
+edit the structure you got, write it back — is exactly the thing that fails.
+
+### A newly created campaign is not a valid test yet
+
+`vwo_new_campaign` returns `status: NOT_STARTED` (a draft that serves no traffic), but it also
+leaves the campaign in a state that isn't a working A/B test, and nothing in VWO's docs warns about
+it:
+
+- VWO creates **only a Control** — every other variation must be added explicitly.
+- That Control comes back `isDisabled: true, percentSplit: 0`, and **adding a variation does not
+  change it**. Left alone, the test has no baseline.
+- The create response can report stale variation values, so read the campaign back rather than
+  trusting it.
+
+The three workflow prompts share a `POST_CREATE_VERIFY_SECTION` that walks through fixing this.
+
+### Deleting a campaign
+
+There is no `DELETE /campaigns/{id}` endpoint — checked the whole spec; campaigns are the one major
+resource without one. Removal is a status change to `DELETED` (or `ARCHIVED`) via
+`vwo_update_campaign_status`, which soft-deletes: the campaign still appears in
+`vwo_list_campaigns` with `isDeleted: true` and via `status=DELETED`. So **creating a campaign is
+reversible**, but deletion is treated as destructive and gated on an explicit user request. (The
+prompts previously claimed creation could not be undone; that was wrong and is corrected.)
+
 ### Request bodies
 
-VWO documents a request schema for only four write endpoints (`vwo_new_workspace`,
-`vwo_update_workspace`, `vwo_new_campaign`, `vwo_update_campaign`). Those get explicit typed fields.
-Every other write tool takes a validated `body` object passed through to VWO, with the
-relevant doc URL in the tool description — rather than a strict schema invented here that
-would reject valid payloads.
+VWO documents a request schema for only three write endpoints (`vwo_new_workspace`,
+`vwo_update_workspace`, `vwo_new_campaign`). Those get explicit typed fields — including
+`vwo_new_campaign`'s `urls` and `goals`, which are now typed from shapes confirmed by a real
+successful creation rather than left as opaque arrays.
+
+Every other write tool takes a validated `body` object passed through to VWO — rather than a strict
+schema invented here that would reject valid payloads. To keep that from meaning "go read the docs
+first", each `body` description carries the endpoint's doc URL **plus a concrete verified example**,
+and `vwo_general_guidance` collects the common ones. The goal is that an agent never needs to fetch
+VWO's reference for a routine write.
+
+### Account listing must pass `includeCurrent`
+
+`GET /accounts` omits the token's own main workspace unless `includeCurrent=true` is passed. This
+caused a real bug: `vwo_list_workspaces` passed it and saw 43 workspaces, while the account
+directory backing `workspaceName` resolution did not and saw 41 — so `workspaceName` could never
+resolve the token's *own* workspace, which is the one a user is most likely to name. It failed with
+"no match" plus a candidate list that conspicuously omitted it. Two different counts from the same
+account is the tell. Fixed in [`accounts.ts`](src/vwo/accounts.ts).
 
 ## Prompts
 
@@ -670,8 +740,18 @@ honestly so hosts can gate write operations.
   goes to stderr; `console.log` must never be used in this project.
 - **Rate limiting is process-wide.** VWO allows 1 request/second per token, so one shared
   gate in `VwoClient` paces all calls regardless of how many tools fire concurrently.
-- **Retries are opt-out for writes.** GETs retry on 429/5xx honoring `Retry-After`;
-  POST/PATCH/DELETE do not retry, since VWO writes are not idempotent.
+- **Retries distinguish "rejected" from "possibly applied."** GETs retry on 429, 5xx, and
+  network failures. Writes (POST/PATCH/DELETE) retry on **429 only** — a rate limit is refused
+  at the limiter so nothing was applied, making a replay safe even for a non-idempotent write,
+  whereas a 5xx or a dropped connection may mean VWO already made the change and only the
+  response was lost. That distinction is `rejectedWithoutSideEffect` vs `retryable` in
+  [`errors.ts`](src/vwo/errors.ts), selected per request by `RetryPolicy` in
+  [`client.ts`](src/vwo/client.ts). Backoff honours `Retry-After`. Verified against a local fake
+  server across all six method/failure combinations.
+- **The rate-limit gate is per-process, so 429s are still reachable.** One shared gate paces this
+  process at VWO's 1 req/sec, but another process using the same token spends the same budget —
+  which is exactly how a 429 surfaced during testing. This is why writes retry on 429 rather than
+  assuming the gate makes it impossible.
 - **Errors are written for an agent.** `VwoApiError.agentMessage` tells the model whether
   a failure is worth retrying — a 401 explicitly says "configuration problem, do not retry".
 

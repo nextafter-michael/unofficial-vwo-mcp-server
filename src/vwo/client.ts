@@ -4,8 +4,13 @@
  * Responsibilities kept here so tool code never touches auth or transport:
  *  - attaches the auth header (the only place the token is read)
  *  - paces requests to VWO's documented 1 request/second per-token limit
- *  - retries transient failures with backoff
+ *  - retries failures with backoff, per the request's {@link RetryPolicy}
  *  - converts every failure into a {@link VwoApiError} whose message is redacted
+ *
+ * The rate-limit gate only paces THIS process, so a 429 is still reachable when
+ * another process shares the token (or the pacing interval is set too low).
+ * Because a 429 is refused before VWO acts, it is retried for every method,
+ * including writes — see {@link RetryPolicy}.
  */
 
 import type { Config } from '../config.js';
@@ -19,11 +24,23 @@ const MAX_ERROR_BODY_CHARS = 600;
 
 export type QueryValue = string | number | boolean | undefined | null;
 
+/**
+ * Which failures a request may be replayed on.
+ *
+ *  - `transient` — rate limits, 5xx, and network failures. Correct for GETs,
+ *    where replaying costs nothing but a request.
+ *  - `rate-limit-only` — ONLY HTTP 429. Correct for POST/PATCH/DELETE: a 429 is
+ *    refused at the rate limiter so nothing was applied, but a 5xx or a lost
+ *    connection may mean VWO already made the change, and replaying a
+ *    non-idempotent write could duplicate it.
+ */
+export type RetryPolicy = 'transient' | 'rate-limit-only';
+
 export interface RequestOptions {
     query?: Record<string, QueryValue>;
     body?: unknown;
-    /** Overrides the default retry behaviour for non-idempotent calls. */
-    retry?: boolean;
+    /** Defaults to `transient`; writes pass `rate-limit-only`. */
+    retryPolicy?: RetryPolicy;
 }
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
@@ -102,11 +119,13 @@ export class VwoClient {
 
     async request<T = unknown>(method: string, path: string, options: RequestOptions = {}): Promise<T> {
         const url = this.#buildUrl(path, options.query);
-        const retry = options.retry ?? true;
+        const retryPolicy = options.retryPolicy ?? 'transient';
 
         let lastError: VwoApiError | undefined;
 
-        for (let attempt = 1; attempt <= (retry ? MAX_ATTEMPTS : 1); attempt++) {
+        // Writes get the full attempt budget too — the policy, not the loop
+        // bound, decides which failures actually justify another attempt.
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             await this.#waitForSlot();
 
             const headers: Record<string, string> = {
@@ -130,7 +149,10 @@ export class VwoClient {
             } catch (error) {
                 const reason = error instanceof Error ? error.message : String(error);
                 lastError = new VwoApiError(`network error: ${reason}`, undefined, method, url.pathname);
-                if (attempt < MAX_ATTEMPTS && retry) {
+                // Deliberately not retried under `rate-limit-only`: a dropped
+                // connection can mean VWO processed the write and only the
+                // response was lost.
+                if (retryPolicy === 'transient' && attempt < MAX_ATTEMPTS) {
                     await sleep(2 ** (attempt - 1) * 500);
                     continue;
                 }
@@ -188,7 +210,12 @@ export class VwoClient {
                 detail
             );
 
-            if (!lastError.retryable || !retry || attempt === MAX_ATTEMPTS) {
+            // A 429 is always replayable — it was refused before VWO acted on it —
+            // so writes retry on rate limits even though they refuse to retry
+            // anything that might already have taken effect.
+            const mayRetry =
+                lastError.rejectedWithoutSideEffect || (retryPolicy === 'transient' && lastError.retryable);
+            if (!mayRetry || attempt === MAX_ATTEMPTS) {
                 throw lastError;
             }
 
@@ -209,14 +236,25 @@ export class VwoClient {
     }
 
     post<T = unknown>(path: string, body: unknown, query?: Record<string, QueryValue>): Promise<T> {
-        return this.request<T>('POST', path, { body, retry: false, ...(query === undefined ? {} : { query }) });
+        return this.request<T>('POST', path, {
+            body,
+            retryPolicy: 'rate-limit-only',
+            ...(query === undefined ? {} : { query })
+        });
     }
 
     patch<T = unknown>(path: string, body: unknown, query?: Record<string, QueryValue>): Promise<T> {
-        return this.request<T>('PATCH', path, { body, retry: false, ...(query === undefined ? {} : { query }) });
+        return this.request<T>('PATCH', path, {
+            body,
+            retryPolicy: 'rate-limit-only',
+            ...(query === undefined ? {} : { query })
+        });
     }
 
     delete<T = unknown>(path: string, query?: Record<string, QueryValue>): Promise<T> {
-        return this.request<T>('DELETE', path, { retry: false, ...(query === undefined ? {} : { query }) });
+        return this.request<T>('DELETE', path, {
+            retryPolicy: 'rate-limit-only',
+            ...(query === undefined ? {} : { query })
+        });
     }
 }

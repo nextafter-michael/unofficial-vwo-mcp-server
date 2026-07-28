@@ -24,6 +24,11 @@ export function registerSectionTools(server: McpServer, ctx: ToolContext): void 
         },
         risk:
             'Sections determine which page areas the campaign varies, so changes affect what live ' +
-            'visitors see and how combinations are reported.'
+            'visitors see and how combinations are reported.',
+        bodyGuidance:
+            'Verified working shape: ' +
+            '`{"name":"Hero block","cssSelector":"DIV#hero > DIV:first-child","variations":[{"name":"Variation 1"}]}`. ' +
+            'Sections are only meaningful for multivariate campaigns; a plain "ab" campaign rejects them ' +
+            'with HTTP 400 "Not allowed for the campaign".'
     });
 }

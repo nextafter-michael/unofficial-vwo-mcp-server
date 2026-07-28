@@ -52,6 +52,25 @@ export class VwoApiError extends Error implements AgentFacingError {
         return this.status === undefined || this.status === 429 || this.status >= 500;
     }
 
+    /**
+     * True when VWO refused the request *before* acting on it, so replaying it
+     * cannot duplicate a side effect — which makes it safe to retry even for a
+     * non-idempotent write.
+     *
+     * Only 429 qualifies, and the distinction from {@link retryable} matters:
+     *  - `429` — rejected at the rate limiter; nothing was applied.
+     *  - `5xx` — VWO may have applied the change and then failed while
+     *    responding.
+     *  - network error / timeout (`status === undefined`) — the request may
+     *    have arrived and been processed with only the response lost.
+     *
+     * The last two are fine to replay for a GET and unsafe to replay for a
+     * POST/PATCH/DELETE, so they are deliberately excluded here.
+     */
+    get rejectedWithoutSideEffect(): boolean {
+        return this.status === 429;
+    }
+
     get agentMessage(): string {
         const where = `${this.method} ${this.path}`;
         switch (this.status) {
@@ -66,7 +85,13 @@ export class VwoApiError extends Error implements AgentFacingError {
             case 404:
                 return `VWO returned 404 Not Found for ${where}. The referenced resource does not exist or is not visible to this token.`;
             case 429:
-                return `VWO rate-limited the request (429) on ${where}. VWO permits 1 request/second per token; wait before retrying.`;
+                return (
+                    `VWO rate-limited the request (429) on ${where}, and this server's automatic ` +
+                    'retries (which honour Retry-After) were exhausted. VWO permits 1 request/second ' +
+                    'per token, so this usually means something else is spending the same budget — ' +
+                    'another tool call in flight, or another process sharing the token. Space out ' +
+                    'subsequent calls rather than retrying immediately.'
+                );
             default:
                 break;
         }

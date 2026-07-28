@@ -50,14 +50,46 @@ export function parseOptionalInt(value: string | undefined): number | undefined 
 
 /**
  * Stated at the top of every "create a new campaign" gather-requirements
- * section. This server has no `delete_campaign` tool (only
- * `vwo_delete_draft_campaigns`, a different resource) — once `vwo_new_campaign`
- * succeeds, none of these workflows can undo it, which is why they all insist
- * on confirming everything before that call rather than inferring silently.
+ * section.
+ *
+ * Creating a campaign IS reversible, contrary to what an earlier version of
+ * this text claimed: VWO has no `DELETE /campaigns/{id}` endpoint, but a
+ * campaign can be soft-deleted or archived by setting its status via
+ * `vwo_update_campaign_status`. That correction matters — overstating
+ * irreversibility invites the opposite failure, where the model refuses to
+ * clean up after itself. The real rule is "be discerning about creating, and
+ * never delete without the user asking."
  */
-export const NO_DELETE_CAMPAIGN_NOTE =
-    '**This server has no `delete_campaign` tool.** Once `vwo_new_campaign` succeeds, ' +
-    'this workflow has no way to undo it.';
+export const NEW_CAMPAIGN_REVERSIBILITY_NOTE =
+    'A new campaign is created as a **draft** (`NOT_STARTED`) and serves no traffic until someone ' +
+    'explicitly starts it, so creating one cannot affect live visitors by itself. It is also ' +
+    'reversible: VWO has no campaign DELETE endpoint, but `vwo_update_campaign_status` can set a ' +
+    'campaign to `DELETED` or `ARCHIVED`. Still, do not create campaigns speculatively or to ' +
+    'explore the API — a real object appears in the user\'s account either way. And never delete or ' +
+    'archive one unless the user explicitly asked you to remove that specific campaign.';
+
+/**
+ * VWO leaves a freshly created campaign in a state that is not a valid A/B
+ * test — Control only, disabled, 0% split — and adding a variation does not
+ * fix the Control. Observed on a real creation; nothing in VWO's docs warns
+ * about it, and it is invisible unless the campaign is read back.
+ */
+export const POST_CREATE_VERIFY_SECTION = `## Immediately after creating a campaign
+
+VWO does not leave a new campaign in a usable state, so check and fix it before reporting done:
+
+1. Read the campaign back (\`vwo_get_campaign\`) — do not trust the create response, which can
+   report stale variation values.
+2. **Confirm the variations exist.** VWO creates ONLY a Control. Every variation beyond it has to
+   be added with \`vwo_new_campaign_variation\`.
+3. **Fix the Control.** It comes back \`isDisabled: true\` with \`percentSplit: 0\`, and adding a
+   variation does NOT change that. Left alone, the test has no baseline and is not a valid A/B
+   test. Set \`{"isDisabled": false, "percentSplit": <share>}\` on it via
+   \`vwo_update_campaign_variation\`.
+4. **Confirm the splits sum to 100** across enabled variations.
+5. **Confirm the status is still \`NOT_STARTED\`** if the user asked for a draft. Creating never
+   starts a campaign, but verify rather than assume — and never call
+   \`vwo_update_campaign_status\` unless starting it was explicitly requested.`;
 
 // ---------------------------------------------------------------------------
 // Campaign snapshot fetching — shared by every workflow that edits an
@@ -186,6 +218,16 @@ EACH variation:
 export function buildVerificationSection(compareTarget: string, extraPreviewNote?: string): string {
     const note = extraPreviewNote ? `\n   ${extraPreviewNote}` : '';
     return `## IV. Get a live view to verify
+
+**First, check whether visual verification even applies.** A campaign at \`NOT_STARTED\` (a draft)
+serves no traffic and has no report, so the live-preview route below may show nothing meaningful.
+For a draft, the honest verification is to read the stored config back
+(\`vwo_get_campaign\` / \`vwo_get_campaign_variation\`) and confirm it matches the plan — then say
+plainly that the change is **stored but not visually verified**, because nothing was rendered to a
+visitor. Do not describe a draft as visually confirmed. The share link is still worth fetching and
+handing to the user (it works for a never-started campaign), but as a reference, not as proof.
+
+For a campaign that IS running, continue:
 
 1. Call \`vwo_get_campaign_share_link\`. This returns a link into VWO's own dashboard
    summary/report page for the campaign — it is NOT a rendered preview by itself; VWO's

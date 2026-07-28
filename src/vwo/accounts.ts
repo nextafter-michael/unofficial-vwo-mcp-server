@@ -55,7 +55,18 @@ export class AccountDirectory {
             return cached.accounts;
         }
 
-        const response = await this.client.get<AccountListResponse>('/accounts', { limit: 100, offset: 0 });
+        // `includeCurrent` is REQUIRED, not optional politeness: without it VWO
+        // omits the token's own main workspace and returns only sub-accounts.
+        // That made `workspaceName` unable to resolve the one workspace a user is
+        // most likely to name — it failed with "no match" and a candidate list
+        // that conspicuously lacked it, while `vwo_list_workspaces` (which does
+        // pass this) listed it fine. Two different counts from the same account
+        // is the tell.
+        const response = await this.client.get<AccountListResponse>('/accounts', {
+            limit: 100,
+            offset: 0,
+            includeCurrent: 'true'
+        });
         const raw = Array.isArray(response?._data) ? response._data : [];
 
         let accounts = raw

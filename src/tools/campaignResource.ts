@@ -39,6 +39,30 @@ export interface CampaignResourceSpec {
     docs: { create: string; update: string };
     /** Extra sentence appended to the create/update/delete descriptions. */
     risk: string;
+    /**
+     * Concrete, verified-against-the-live-API guidance about this resource's
+     * request body, so an agent can construct one without fetching VWO's docs.
+     * Prepended to the generic `body` description. Omit if there is nothing
+     * resource-specific worth saying.
+     */
+    bodyGuidance?: string;
+}
+
+/**
+ * VWO requires every campaign sub-resource write to be wrapped in the plural
+ * resource name — `{"goals": {...}}`, `{"variations": {...}}`,
+ * `{"sections": {...}}` — which happens to be exactly `spec.segment`. An
+ * unwrapped body is rejected with `HTTP 400 "Request is not in desired
+ * format."` (hit live against the variations endpoint).
+ *
+ * Wrapping here rather than asking the caller to do it matches what
+ * `vwo_update_campaign` already does with its `campaigns` wrapper, and for the
+ * same stated reason: models reliably get nesting like this wrong. An
+ * already-wrapped body is passed through untouched so an explicitly-correct
+ * payload never gets double-wrapped.
+ */
+function wrapBody(segment: string, body: Record<string, unknown>): Record<string, unknown> {
+    return segment in body ? body : { [segment]: body };
 }
 
 export function registerCampaignResource(server: McpServer, ctx: ToolContext, spec: CampaignResourceSpec): void {
@@ -107,13 +131,21 @@ export function registerCampaignResource(server: McpServer, ctx: ToolContext, sp
             inputSchema: z.object({
                 ...accountArgs,
                 ...campaignIdArg,
-                ...bodyArg(spec.docs.create, `Definition of the ${spec.singular} to create.`)
+                ...bodyArg(
+                    spec.docs.create,
+                    `Definition of the ${spec.singular} to create. Pass the fields directly — this tool ` +
+                        `adds the \`${spec.segment}\` wrapper VWO requires.` +
+                        (spec.bodyGuidance ? ` ${spec.bodyGuidance}` : '')
+                )
             }),
             annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true }
         },
         toolHandler(spec.tools.create, async ({ campaignId, body, ...rest }) => {
             const account = await resolveAccount(ctx, rest);
-            const response = await ctx.client.post<VwoEnvelope>(basePath(account, campaignId), body);
+            const response = await ctx.client.post<VwoEnvelope>(
+                basePath(account, campaignId),
+                wrapBody(spec.segment, body)
+            );
             return jsonResult({ account, campaignId, created: unwrapData(response) });
         })
     );
@@ -128,7 +160,12 @@ export function registerCampaignResource(server: McpServer, ctx: ToolContext, sp
                 ...accountArgs,
                 ...campaignIdArg,
                 ...idArg,
-                ...bodyArg(spec.docs.update, `Fields to change on the ${spec.singular}.`)
+                ...bodyArg(
+                    spec.docs.update,
+                    `Fields to change on the ${spec.singular}. Pass the fields directly — this tool adds ` +
+                        `the \`${spec.segment}\` wrapper VWO requires.` +
+                        (spec.bodyGuidance ? ` ${spec.bodyGuidance}` : '')
+                )
             }),
             annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true }
         },
@@ -138,7 +175,7 @@ export function registerCampaignResource(server: McpServer, ctx: ToolContext, sp
             const account = await resolveAccount(ctx, args);
             const response = await ctx.client.patch<VwoEnvelope>(
                 `${basePath(account, campaignId)}/${resourceId}`,
-                body
+                wrapBody(spec.segment, body)
             );
             return jsonResult({ account, campaignId, [spec.idArg]: resourceId, updated: unwrapData(response) });
         })

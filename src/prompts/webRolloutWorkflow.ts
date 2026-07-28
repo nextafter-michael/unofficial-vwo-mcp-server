@@ -26,7 +26,8 @@ import {
     buildEditorDataUnderstandSection,
     buildSnapshotSection,
     buildVerificationSection,
-    NO_DELETE_CAMPAIGN_NOTE,
+    NEW_CAMPAIGN_REVERSIBILITY_NOTE,
+    POST_CREATE_VERIFY_SECTION,
     parseOptionalInt,
     promptResult,
     WRAP_UP_SECTION
@@ -37,13 +38,14 @@ function buildInstructions(changeRequest: string, snapshotSection: string, isNew
         ? `## I. This is a NEW web rollout — gather requirements first
 
 No campaignId was given, so there is nothing existing to inspect — but there is still a
-lot to confirm before creating anything. ${NO_DELETE_CAMPAIGN_NOTE} Gather every item below
+lot to confirm before creating anything. ${NEW_CAMPAIGN_REVERSIBILITY_NOTE} Gather every item below
 and restate the full plan to the user for explicit confirmation before making that call.
 Don't infer a missing field silently — ask, except where a default is stated below.
 
 1. **Workspace.** Confirm which workspace (\`accountId\`/\`workspaceName\`) this belongs to.
-   Getting this wrong means the campaign now exists in the wrong client's account with no
-   way to remove it through this server.
+   Getting this wrong creates the rollout in the wrong client's account. That is
+   recoverable, but only by asking the user to approve deleting it — so confirm up front
+   rather than relying on cleanup.
 2. **Type is \`feature-rollout\`** — that's what this workflow builds, and it's why there
    is no control and no goal below; a rollout ships a change, it doesn't run an experiment.
 3. **Editor URL (\`primaryUrl\`).** The exact page opened in VWO's visual editor to build
@@ -64,11 +66,12 @@ Don't infer a missing field silently — ask, except where a default is stated b
    it a staged/ramped rollout at some smaller percentage first? Default to 100% unless the
    user indicates staging — but state that assumption explicitly, since it's the one
    rollout-specific decision that materially changes exposure.
-8. **One variation, no control.** State this explicitly in the plan. After creating the
-   campaign, check what VWO actually created (\`vwo_get_campaign\` /
-   \`vwo_list_campaign_variations\`) — if VWO auto-created an extra default variation you
-   don't want, \`vwo_delete_campaign_variation\` can remove it (unlike a whole campaign, a
-   single variation CAN be deleted) — but confirm with the user before deleting anything.
+8. **One variation, no control.** State this explicitly in the plan. Note VWO creates the
+   campaign with a Control regardless, left disabled at 0% — for a rollout that is
+   arguably what you want (no baseline to compare against), so leave it disabled rather
+   than enabling it the way an A/B test would. If VWO also auto-created an extra variation
+   you don't want, \`vwo_delete_campaign_variation\` can remove it — but confirm with the
+   user before deleting anything.
 9. **What the variation specifically does.** A precise, concrete description — not "make
    it better." If the intended change is vague, ask before writing any \`editorData\`.
 
@@ -105,6 +108,8 @@ rather than guessing at specifics like an exact color.
 Make one focused change per call. Every one of these calls requires human approval in
 hosts that enforce it (this server marks all writes that way); expect and wait for that,
 it isn't a failure.
+
+${POST_CREATE_VERIFY_SECTION}
 
 ${buildVerificationSection('the SPECIFIC change from your plan (II), not just "did the page load"')}
 

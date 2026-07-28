@@ -27,7 +27,8 @@ import type { ToolContext } from '../tools/shared.js';
 import {
     buildSnapshotSection,
     buildVerificationSection,
-    NO_DELETE_CAMPAIGN_NOTE,
+    NEW_CAMPAIGN_REVERSIBILITY_NOTE,
+    POST_CREATE_VERIFY_SECTION,
     parseOptionalInt,
     promptResult,
     WRAP_UP_SECTION
@@ -46,13 +47,14 @@ function buildInstructions(changeRequest: string, snapshotSection: string, isNew
         ? `## I. This is a NEW split test — gather requirements first
 
 No campaignId was given, so there is nothing existing to inspect — but there is a lot to
-confirm before creating anything. ${NO_DELETE_CAMPAIGN_NOTE} Gather every item below and
+confirm before creating anything. ${NEW_CAMPAIGN_REVERSIBILITY_NOTE} Gather every item below and
 restate the full plan to the user for explicit confirmation before making that call.
 Don't infer a missing field silently — ask, except where a default is stated below.
 
 1. **Workspace.** Confirm which workspace (\`accountId\`/\`workspaceName\`) this belongs to.
-   Getting this wrong means the campaign now exists in the wrong client's account with no
-   way to remove it through this server.
+   Getting this wrong creates the campaign in the wrong client's account. That is
+   recoverable, but only by asking the user to approve deleting it — so confirm up front
+   rather than relying on cleanup.
 2. **Type is \`split\`** — that's what this workflow builds. (Not "split-url"; VWO's own
    enum uses the bare word "split".)
 3. **Primary/control URL (\`primaryUrl\`).** The original page visitors see by default.
@@ -111,6 +113,8 @@ ambiguous about which variation or destination is meant, ask rather than guessin
 Make one focused change per call. Every one of these calls requires human approval in
 hosts that enforce it (this server marks all writes that way); expect and wait for that,
 it isn't a failure.
+
+${POST_CREATE_VERIFY_SECTION}
 
 ${buildVerificationSection(
     'the destination URL(s) from your plan (II) — confirm you landed on the correct page and ' +
