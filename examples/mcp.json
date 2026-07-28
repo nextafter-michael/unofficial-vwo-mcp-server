@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "vwo": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["${VWO_MCP_HOME:-../unofficial-vwo-mcp-server}/dist/index.js"],
+      "env": {
+        "VWO_API_TOKEN": "${VWO_API_TOKEN}",
+        "VWO_ALLOWED_ACCOUNT_IDS": "${VWO_ALLOWED_ACCOUNT_IDS:-}"
+      }
+    }
+  }
+}

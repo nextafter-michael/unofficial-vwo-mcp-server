@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.log
+
+# Secrets — never commit a real token or token file.
+.env
+.env.*
+!.env.example
+*.token
+secrets/

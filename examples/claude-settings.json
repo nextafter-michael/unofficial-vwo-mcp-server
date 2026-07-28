@@ -1,0 +1,19 @@
+{
+  "enabledMcpjsonServers": ["vwo"],
+  "permissions": {
+    "allow": [
+      "mcp__vwo__vwo_verify_connection",
+      "mcp__vwo__vwo_list_*",
+      "mcp__vwo__vwo_get_*"
+    ],
+    "ask": [
+      "mcp__vwo__vwo_new_*",
+      "mcp__vwo__vwo_create_*",
+      "mcp__vwo__vwo_add_*",
+      "mcp__vwo__vwo_update_*"
+    ],
+    "deny": [
+      "mcp__vwo__vwo_delete_*"
+    ]
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "//": "Save as .vscode/mcp.json (workspace) or via 'MCP: Open User Configuration' (user profile).",
+  "inputs": [
+    {
+      "type": "promptString",
+      "id": "vwo-api-token",
+      "description": "VWO API token (generate at https://app.vwo.com/#/developers/tokens)",
+      "password": true
+    }
+  ],
+  "servers": {
+    "vwo": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["/absolute/path/to/unofficial-vwo-mcp-server/dist/index.js"],
+      "env": {
+        "VWO_API_TOKEN": "${input:vwo-api-token}"
+      }
+    }
+  }
+}

@@ -1,0 +1,19 @@
+# Append to ~/.codex/config.toml (all projects) or ./.codex/config.toml (this project).
+#
+# Codex has no ${VAR} expansion inside the TOML file itself. Instead, `env_vars`
+# forwards specific variables already set in your own shell environment into the
+# server's process — so the token still never lives in this file.
+
+[mcp_servers.vwo]
+command = "node"
+args = ["/absolute/path/to/unofficial-vwo-mcp-server/dist/index.js"]
+env_vars = ["VWO_API_TOKEN"]
+
+# Static, non-secret values can go directly in an env table:
+[mcp_servers.vwo.env]
+VWO_ALLOWED_ACCOUNT_IDS = ""
+
+# If you plan to also run Chrome DevTools MCP alongside this server, e.g.:
+# [mcp_servers.chrome_devtools]
+# command = "npx"
+# args = ["-y", "chrome-devtools-mcp@latest"]
